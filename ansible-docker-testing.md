@@ -24,6 +24,8 @@
 - Iteration 3: refactoring, functional tests
 - Discussion, future work
 
+Presentation: <https://bertvv.github.io/presentation-cfgmgmtcamp2017/>
+
 ## Motivation
 
 - I develop roles <https://galaxy.ansible.com/bertvv/>
