@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="generator" content="pandoc">
+  <meta name="author" content="Bert Van Vreckem">
+  <title>(Ab)using Docker for automated testing of Ansible roles on multiple distros with Travis-CI</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+  <link rel="stylesheet" href="reveal.js/css/reveal.css">
+  <style type="text/css">code{white-space: pre;}</style>
+  <style type="text/css">
+div.sourceCode { overflow-x: auto; }
+table.sourceCode, tr.sourceCode, td.lineNumbers, td.sourceCode {
+  margin: 0; padding: 0; vertical-align: baseline; border: none; }
+table.sourceCode { width: 100%; line-height: 100%; }
+td.lineNumbers { text-align: right; padding-right: 4px; padding-left: 4px; color: #aaaaaa; border-right: 1px solid #aaaaaa; }
+td.sourceCode { padding-left: 5px; }
+code > span.kw { color: #0000ff; } /* Keyword */
+code > span.ch { color: #008080; } /* Char */
+code > span.st { color: #008080; } /* String */
+code > span.co { color: #008000; } /* Comment */
+code > span.ot { color: #ff4000; } /* Other */
+code > span.al { color: #ff0000; } /* Alert */
+code > span.er { color: #ff0000; font-weight: bold; } /* Error */
+code > span.wa { color: #008000; font-weight: bold; } /* Warning */
+code > span.cn { } /* Constant */
+code > span.sc { color: #008080; } /* SpecialChar */
+code > span.vs { color: #008080; } /* VerbatimString */
+code > span.ss { color: #008080; } /* SpecialString */
+code > span.im { } /* Import */
+code > span.va { } /* Variable */
+code > span.cf { color: #0000ff; } /* ControlFlow */
+code > span.op { } /* Operator */
+code > span.bu { } /* BuiltIn */
+code > span.ex { } /* Extension */
+code > span.pp { color: #ff4000; } /* Preprocessor */
+code > span.do { color: #008000; } /* Documentation */
+code > span.an { color: #008000; } /* Annotation */
+code > span.cv { color: #008000; } /* CommentVar */
+code > span.at { } /* Attribute */
+code > span.in { color: #008000; } /* Information */
+  </style>
+  <link rel="stylesheet" href="reveal.js/css/theme/hogent.css" id="theme">
+  <!-- Printing and PDF exports -->
+  <script>
+    var link = document.createElement( 'link' );
+    link.rel = 'stylesheet';
+    link.type = 'text/css';
+    link.href = window.location.search.match( /print-pdf/gi ) ? 'reveal.js/css/print/pdf.css' : 'reveal.js/css/print/paper.css';
+    document.getElementsByTagName( 'head' )[0].appendChild( link );
+  </script>
+  <!--[if lt IE 9]>
+  <script src="reveal.js/lib/js/html5shiv.js"></script>
+  <![endif]-->
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+<section>
+  <h1 class="title">(Ab)using Docker for automated testing of Ansible roles on multiple distros with Travis-CI</h1>
+  <h2 class="author">Bert Van Vreckem</h2>
+  <h3 class="date">Config Management Camp 2017 Ghent, 2017-02-06</h3>
+</section>
+
+<section><section id="intro" class="titleslide slide level1"><h1>Intro</h1></section><section id="whoami" class="slide level2">
+<h1><code>whoami</code></h1>
+<ul>
+<li>Bert Van Vreckem</li>
+<li><em>Lector ICT</em> at University College Ghent (HoGent)
+<ul>
+<li>BS programme Applied Informatics</li>
+<li>Mainly Linux, research techniques</li>
+</ul></li>
+<li><em>Open source</em> contributor: <a href="https://github.com/bertvv/" class="uri">https://github.com/bertvv/</a>
+<ul>
+<li>Ansible roles</li>
+<li>Scripts</li>
+<li>Course material</li>
+<li>...</li>
+</ul></li>
+</ul>
+</section><section id="agenda" class="slide level2">
+<h1>Agenda</h1>
+<ul>
+<li>Testing with Vagrant</li>
+<li>Iteration 1: testing roles for CentOS</li>
+<li>Iteration 2: add platforms</li>
+<li>Iteration 3: refactoring, functional tests</li>
+<li>Discussion, future work</li>
+</ul>
+<p>Presentation: <a href="https://bertvv.github.io/presentation-cfgmgmtcamp2017/" class="uri">https://bertvv.github.io/presentation-cfgmgmtcamp2017/</a></p>
+</section><section id="motivation" class="slide level2">
+<h1>Motivation</h1>
+<ul>
+<li>I develop roles <a href="https://galaxy.ansible.com/bertvv/" class="uri">https://galaxy.ansible.com/bertvv/</a>
+<ul>
+<li>~16 on Ansible Galaxy, some more unreleased</li>
+<li>Primary target platform = latest <em>CentOS</em></li>
+</ul></li>
+<li><em>Testing</em> matters to me</li>
+<li><em>Automate</em> all the things!</li>
+</ul>
+</section><section id="lets-create-an-ftp-role" class="slide level2">
+<h1>Let's create an &quot;ftp&quot; role</h1>
+<ul>
+<li>Initial target platform: CentOS 7</li>
+<li>Add Vagrant &amp; Docker tests</li>
+<li>Bootstrapping automated with <a href="https://github.com/bertvv/ansible-toolbox" class="uri">https://github.com/bertvv/ansible-toolbox</a></li>
+</ul>
+</section></section>
+<section><section id="original-setup" class="titleslide slide level1"><h1>Original setup</h1></section><section id="role-scaffolding-code" class="slide level2">
+<h1>Role scaffolding code</h1>
+<p><a href="https://github.com/bertvv/ansible-role-skeleton" class="uri">https://github.com/bertvv/ansible-role-skeleton</a></p>
+<pre><code>$ atb role --tests=vagrant ftp
+$ tree ftp/
+ftp/
+├── CHANGELOG.md
+├── defaults/
+│   └── main.yml
+├── handlers/
+│   └── main.yml
+├── LICENSE.md
+├── meta/
+│   └── main.yml
+├── README.md
+├── tasks/
+│   └── main.yml
+├── vagrant-tests/  # see below
+└── vars/
+    └── RedHat.yml
+
+5 directories, 8 files</code></pre>
+</section><section id="test-code" class="slide level2">
+<h1>Test code</h1>
+<ul>
+<li>on a separate orphan branch</li>
+<li>&quot;mounted&quot; through <code>git-worktree</code></li>
+</ul>
+<pre><code>$ tree vagrant-tests/
+vagrant-tests/
+├── README.md
+├── roles
+│   └── ftp -&gt; ../..
+├── test.yml
+└── Vagrantfile
+
+2 directories, 3 files</code></pre>
+</section><section id="vagrantfile" class="slide level2">
+<h1>Vagrantfile</h1>
+<div class="sourceCode"><pre class="sourceCode ruby"><code class="sourceCode ruby">require <span class="st">&#39;rbconfig&#39;</span>
+
+<span class="dt">ROLE_NAME</span> = <span class="st">&#39;ftp&#39;</span>
+<span class="dt">HOST_NAME</span> = <span class="st">&#39;test&#39;</span> + <span class="dt">ROLE_NAME</span>
+<span class="dt">VAGRANTFILE_API_VERSION</span> = <span class="st">&#39;2&#39;</span>
+
+<span class="dt">Vagrant</span>.configure(<span class="dt">VAGRANTFILE_API_VERSION</span>) <span class="kw">do</span> |config|
+  config.vm.box = <span class="st">&#39;bertvv/centos72&#39;</span>
+
+  config.vm.define <span class="dt">HOST_NAME</span> <span class="kw">do</span> |node|
+    node.vm.hostname = <span class="dt">HOST_NAME</span>
+    node.vm.network <span class="st">:private_network</span>, <span class="st">ip: &#39;192.168.56.42&#39;</span>
+    node.vm.provision <span class="st">&#39;ansible&#39;</span> <span class="kw">do</span> |ansible|
+      ansible.playbook = <span class="st">&#39;test.yml&#39;</span>
+    <span class="kw">end</span>
+  <span class="kw">end</span>
+<span class="kw">end</span></code></pre></div>
+</section><section id="test.yml" class="slide level2">
+<h1>test.yml</h1>
+<p>Test playbook:</p>
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="co"># Test playbook for Ansible role bertvv.ftp</span>
+<span class="ot">---</span>
+<span class="kw">-</span> <span class="fu">hosts:</span> all
+  <span class="fu">become:</span> true
+  <span class="fu">roles:</span>
+    <span class="kw">-</span> role_under_test
+  <span class="fu">post_tasks:</span>
+    <span class="kw">-</span> <span class="fu">name:</span> Put a file into the shared directory
+      <span class="fu">copy:</span>
+        <span class="fu">dest:</span> /var/ftp/pub/README
+        <span class="fu">content:</span> <span class="st">&#39;hello world!&#39;</span></code></pre></div>
+</section><section id="running-tests" class="slide level2">
+<h1>Running tests</h1>
+<pre><code>$ vagrant up
+Bringing machine &#39;testftp&#39; up with &#39;virtualbox&#39; provider...
+==&gt; testftp: Importing base box &#39;bertvv/centos72&#39;...
+[...]
+==&gt; testftp: Running provisioner: ansible...
+    testftp: Running ansible-playbook...
+
+PLAY [all] *********************************************************************
+
+[...]
+
+TASK [ftp : Ensure service is started] *****************************************
+changed: [testftp]
+
+PLAY RECAP *********************************************************************
+testftp                    : ok=4    changed=2    unreachable=0    failed=0</code></pre>
+<p>Afterwards: <code>curl ftp://192.168.56.42/pub/README</code></p>
+</section><section id="issues" class="slide level2">
+<h1>Issues</h1>
+<p>This still serves me fine, but...</p>
+<p>Supporting multiple platforms is hard</p>
+<ul>
+<li>Vagrantfile complexity</li>
+<li>Running tests distracts</li>
+<li>Can't run in parallel</li>
+</ul>
+</section><section id="ci" class="slide level2">
+<h1>CI</h1>
+<p>=&gt; search for a CI/CD tool</p>
+<ul>
+<li>My roles: CentOS / most tools: Ubuntu</li>
+<li>Then I found uit Travis-CI supports docker...</li>
+</ul>
+</section></section>
+<section><section id="iteration-1-testing-roles-for-centos" class="titleslide slide level1"><h1>Iteration 1: testing roles for CentOS</h1></section><section id="setup" class="slide level2">
+<h1>Setup</h1>
+<ul>
+<li>Docker image with
+<ul>
+<li><code>systemd</code></li>
+<li>Ansible + dependencies installed
+<ul>
+<li>configured to run locally</li>
+</ul></li>
+</ul></li>
+<li><code>.travis.yml</code>:
+<ul>
+<li>pulls image</li>
+<li>start container</li>
+<li>run <code>ansible-playbook test.yml</code> inside the container</li>
+</ul></li>
+</ul>
+</section><section class="slide level2">
+
+<p><a href="https://hub.docker.com/r/bertvv/ansible-testing/" class="uri">https://hub.docker.com/r/bertvv/ansible-testing/</a></p>
+<div class="sourceCode"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span class="kw">FROM</span> centos:7
+<span class="kw">MAINTAINER</span> Bert Van Vreckem &lt;bert.vanvreckem@gmail.com&gt;
+<span class="kw">ENV</span> container docker
+
+<span class="co"># Install systemd -- See https://hub.docker.com/_/centos/</span>
+<span class="kw">RUN</span> \
+    (cd /lib/systemd/system/sysinit.target.wants/ || exit; for i in *; do [ <span class="st">&quot;$i&quot;</span> = systemd-tmpfiles-setup.service ] || rm -f <span class="st">&quot;$i&quot;</span>; done); \
+    rm -f /lib/systemd/system/multi-user.target.wants/*; \
+    rm -f /etc/systemd/system/*.wants/*; \
+    rm -f /lib/systemd/system/local-fs.target.wants/*; \
+    rm -f /lib/systemd/system/sockets.target.wants/*udev*; \
+    rm -f /lib/systemd/system/sockets.target.wants/*initctl*; \
+    rm -f /lib/systemd/system/basic.target.wants/*; \
+    rm -f /lib/systemd/system/anaconda.target.wants/*; \
+<span class="co"># Continued</span></code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile">    yum -y upgrade; \
+    yum -y install epel-release; \
+    yum -y install git ansible sudo libselinux-python iproute; \
+    yum clean all; \
+    sed -i -e <span class="st">&#39;s/^\(Defaults\s*requiretty\)/#--- \1/&#39;</span>  /etc/sudoers; \
+    echo -e <span class="st">&#39;[local]\nlocalhost ansible_connection=local&#39;</span> &gt; /etc/ansible/hosts; \
+    echo -e <span class="st">&#39;[defaults]\nretry_files_enabled = False&#39;</span> &gt; /etc/ansible/ansible.cfg
+
+
+<span class="kw">VOLUME</span> [<span class="st">&quot;/sys/fs/cgroup&quot;</span>]
+<span class="kw">CMD</span> [<span class="st">&quot;/usr/sbin/init&quot;</span>]</code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="co"># .travis.yml</span>
+<span class="ot">---</span>
+<span class="fu">sudo:</span> required
+<span class="fu">env:</span>
+  <span class="kw">-</span> CONTAINER_ID=$(mktemp)
+
+<span class="fu">services:</span>
+  <span class="kw">-</span> docker
+
+<span class="fu">before_install:</span>
+  <span class="kw">-</span> sudo apt-get update
+  <span class="kw">-</span> <span class="fu">sudo docker pull bertvv/ansible-testing:</span>centos_7
+
+<span class="fu">script:</span>
+  <span class="kw">-</span> sudo docker run --detach --privileged \
+      <span class="kw">-</span>-<span class="fu">volume=/sys/fs/cgroup:</span>/sys/fs/cgroup:ro \
+      <span class="kw">-</span>-<span class="fu">volume=&quot;${PWD}&quot;:</span>/etc/ansible/roles/role_under_test:ro \
+      <span class="fu">bertvv/ansible-testing:</span>centos_7 /usr/sbin/init &gt; &quot;${CONTAINER_ID}&quot;
+  <span class="kw">-</span> sudo docker exec <span class="st">&quot;$(cat ${CONTAINER_ID})&quot;</span> \
+      ansible-playbook /etc/ansible/test.yml --syntax-check
+  <span class="kw">-</span> sudo docker exec <span class="st">&quot;$(cat ${CONTAINER_ID})&quot;</span> \
+      ansible-playbook /etc/ansible/test.yml</code></pre></div>
+</section></section>
+<section><section id="iteration-2-add-platforms" class="titleslide slide level1"><h1>Iteration 2: add platforms</h1></section><section id="setup-1" class="slide level2">
+<h1>Setup</h1>
+<ul>
+<li>If we can do this for one distro, why not for others?</li>
+<li>Added container images for Ubuntu 12.04, 14.04, CentOS 6</li>
+<li><code>.travis.yml</code> with environment matrix</li>
+<li>Built PoC based on <a href="https://galaxy.ansible.com/geerlingguy/apache/"><code>geerlingguy.apache</code></a>
+<ul>
+<li>submitted <a href="https://github.com/geerlingguy/ansible-role-apache/pull/60">PR#60</a>, was <a href="https://github.com/geerlingguy/ansible-role-apache/pull/60#issuecomment-164291402">accepted</a></li>
+</ul></li>
+</ul>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="co"># .travis.yml</span>
+<span class="fu">sudo:</span> required
+<span class="fu">env:</span>
+  <span class="kw">-</span> <span class="fu">distribution:</span> centos
+    <span class="fu">version:</span> 6
+    <span class="fu">init:</span> /sbin/init
+    <span class="fu">run_opts:</span> <span class="st">&quot;&quot;</span>
+    <span class="fu">container_id:</span> $(mktemp)
+  <span class="kw">-</span> <span class="fu">distribution:</span> centos
+    <span class="fu">version:</span> 7
+    <span class="fu">init:</span> /usr/lib/systemd/systemd
+    <span class="fu">run_opts:</span> <span class="st">&quot;--privileged --volume=/sys/fs/cgroup:/sys/fs/cgroup:ro&quot;</span>
+    <span class="fu">container_id:</span> $(mktemp)
+  <span class="kw">-</span> <span class="fu">distribution:</span> ubuntu
+    <span class="fu">version:</span> 14.04
+    <span class="fu">init:</span> /sbin/init
+    <span class="fu">run_opts:</span> <span class="st">&quot;&quot;</span>
+    <span class="fu">container_id:</span> $(mktemp)
+  <span class="kw">-</span> <span class="fu">distribution:</span> ubuntu
+    <span class="fu">version:</span> 12.04
+    <span class="fu">init:</span> /sbin/init
+    <span class="fu">run_opts:</span> <span class="st">&quot;&quot;</span>
+    <span class="fu">container_id:</span> $(mktemp)</code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="fu">services:</span>
+  <span class="kw">-</span> docker
+
+<span class="fu">before_install:</span>
+  <span class="kw">-</span> sudo apt-get update
+  <span class="co"># Pull container</span>
+  <span class="kw">-</span> <span class="fu">sudo docker pull bertvv/ansible-testing:</span>${distribution}_${version}</code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="fu">script:</span>
+  <span class="co"># Run container in detached state</span>
+  <span class="kw">-</span> sudo docker run --detach \
+      <span class="kw">-</span>-<span class="fu">volume=&quot;${PWD}&quot;:</span>/etc/ansible/roles/role_under_test:ro \
+      <span class="fu">${run_opts} bertvv/ansible-testing:</span>${distribution}_${version} \
+      <span class="st">&quot;${init}&quot;</span> &gt; <span class="st">&quot;${container_id}&quot;</span>
+
+  <span class="co"># Syntax check</span>
+  <span class="kw">-</span> sudo docker exec --tty <span class="st">&quot;$(cat ${container_id})&quot;</span> env TERM=xterm \
+      ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml \
+      <span class="kw">-</span>-syntax-check
+  <span class="co"># Test role</span>
+  <span class="kw">-</span> sudo docker exec --tty <span class="st">&quot;$(cat ${container_id})&quot;</span> env TERM=xterm \
+      ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml \
+  <span class="co"># Idempotence test</span>
+  <span class="kw">-</span> &gt;
+    sudo docker exec <span class="st">&quot;$(cat ${container_id})&quot;</span>  env TERM=xterm
+      ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml
+      | grep -q <span class="st">&#39;changed=0.*failed=0&#39;</span>
+    <span class="dt">&amp;&amp;</span> <span class="fu">(echo &#39;Idempotence test:</span> pass&#39; &amp;&amp; exit 0)
+    <span class="fu">|| (echo &#39;Idempotence test:</span> fail&#39; &amp;&amp; exit 1)</code></pre></div>
+</section></section>
+<section><section id="iteration-3-refactoring-functional-tests" class="titleslide slide level1"><h1>Iteration 3: Refactoring, functional tests</h1></section><section id="setup-2" class="slide level2">
+<h1>Setup</h1>
+<ul>
+<li>It#2: All commands enumerated in <code>.travis.yml</code>
+<ul>
+<li>Limited reusability</li>
+<li>Hard to reproduce locally</li>
+</ul></li>
+<li>Moved code to <code>docker-tests.sh</code></li>
+<li>Added framework for functional tests</li>
+</ul>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="co"># .travis.yml Execution script for role tests on Travis-CI</span>
+<span class="ot">---</span>
+<span class="fu">sudo:</span> required
+
+<span class="fu">env:</span>
+  <span class="fu">matrix:</span>
+    <span class="kw">-</span> <span class="fu">DISTRIBUTION:</span> centos
+      <span class="fu">VERSION:</span> 7
+    <span class="kw">-</span> <span class="fu">DISTRIBUTION:</span> ubuntu
+      <span class="fu">VERSION:</span> 14.04
+    <span class="kw">-</span> <span class="fu">DISTRIBUTION:</span> ubuntu
+      <span class="fu">VERSION:</span> 16.04
+
+<span class="fu">services:</span>
+  <span class="kw">-</span> docker
+
+<span class="fu">before_install:</span>
+    <span class="co"># Install latest Git</span>
+  <span class="kw">-</span> sudo apt-get update
+  <span class="kw">-</span> sudo apt-get install --only-upgrade git
+    <span class="co"># Allow fetching other branches than master</span>
+  <span class="kw">-</span> <span class="fu">git config remote.origin.fetch +refs/heads/*:</span>refs/remotes/origin/*
+    <span class="co"># Fetch the branch with test code</span>
+  <span class="kw">-</span> git fetch origin docker-tests
+  <span class="kw">-</span> git worktree add docker-tests origin/docker-tests</code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span class="fu">script:</span>
+  <span class="co"># Create container and apply test playbook</span>
+  <span class="kw">-</span> ./docker-tests/docker-tests.sh
+
+  <span class="co"># Run functional tests on the container</span>
+  <span class="kw">-</span> SUT_IP=172.17.0.2 ./docker-tests/functional-tests.sh</code></pre></div>
+</section><section id="docker-tests.sh" class="slide level2">
+<h1><code>docker-tests.sh</code></h1>
+<p>To run locally:</p>
+<p><code>DISTRIBUTION=centos VERSION=7 docker-tests/docker-tests.sh</code></p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="fu">main()</span> <span class="kw">{</span>
+  <span class="co"># Sets distribution-specific run-options for docker</span>
+  <span class="kw">configure_environment</span>
+
+  <span class="kw">start_container</span>
+
+  <span class="kw">run_syntax_check</span>
+  <span class="kw">run_test_playbook</span>
+  <span class="kw">run_idempotence_test</span>
+
+  <span class="co"># cleanup</span>
+<span class="kw">}</span></code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="fu">start_container()</span> <span class="kw">{</span>
+  <span class="kw">log</span> <span class="st">&quot;Starting container&quot;</span>
+  <span class="kw">set</span> <span class="kw">-x</span>
+  <span class="kw">docker</span> run --detach \
+    --volume=<span class="st">&quot;</span><span class="ot">${PWD}</span><span class="st">:</span><span class="ot">${role_dir}</span><span class="st">:ro&quot;</span> \
+    <span class="st">&quot;</span><span class="ot">${run_opts[@]}</span><span class="st">&quot;</span> \
+    <span class="st">&quot;</span><span class="ot">${docker_image}</span><span class="st">:</span><span class="ot">${DISTRIBUTION}</span><span class="st">_</span><span class="ot">${VERSION}</span><span class="st">&quot;</span> \
+    <span class="st">&quot;</span><span class="ot">${init}</span><span class="st">&quot;</span> \
+    <span class="kw">&gt;</span> <span class="st">&quot;</span><span class="ot">${container_id}</span><span class="st">&quot;</span>
+  <span class="kw">set</span> <span class="kw">+x</span>
+<span class="kw">}</span></code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="fu">run_syntax_check()</span> <span class="kw">{</span>
+  <span class="kw">log</span> <span class="st">&#39;Running syntax check on playbook&#39;</span>
+  <span class="kw">exec_container</span> ansible-playbook <span class="st">&quot;</span><span class="ot">${test_playbook}</span><span class="st">&quot;</span> --syntax-check
+  <span class="kw">log</span> <span class="st">&#39;Syntax check finished&#39;</span>
+<span class="kw">}</span>
+
+<span class="fu">run_test_playbook()</span> <span class="kw">{</span>
+  <span class="kw">log</span> <span class="st">&#39;Running playbook&#39;</span>
+  <span class="kw">exec_container</span> ansible-playbook <span class="st">&quot;</span><span class="ot">${test_playbook}</span><span class="st">&quot;</span>
+  <span class="kw">log</span> <span class="st">&#39;Run finished&#39;</span>
+<span class="kw">}</span></code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="fu">exec_container()</span> <span class="kw">{</span>
+  <span class="kw">local</span> <span class="ot">id</span>
+  <span class="ot">id=</span><span class="st">&quot;</span><span class="ot">$(</span><span class="kw">get_container_id</span><span class="ot">)</span><span class="st">&quot;</span>
+
+  <span class="kw">set</span> <span class="kw">-x</span>
+  <span class="kw">docker</span> exec --tty \
+    <span class="st">&quot;</span><span class="ot">${id}</span><span class="st">&quot;</span> \
+    env TERM=xterm \
+    <span class="st">&quot;</span><span class="ot">${@}</span><span class="st">&quot;</span>
+  <span class="kw">set</span> <span class="kw">+x</span>
+<span class="kw">}</span></code></pre></div>
+</section><section class="slide level2">
+
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="fu">run_idempotence_test()</span> <span class="kw">{</span>
+  <span class="kw">log</span> <span class="st">&#39;Running idempotence test&#39;</span>
+  <span class="kw">local</span> <span class="ot">output</span>
+  <span class="ot">output=</span><span class="st">&quot;</span><span class="ot">$(</span><span class="kw">mktemp</span><span class="ot">)</span><span class="st">&quot;</span>
+
+  <span class="kw">exec_container</span> ansible-playbook <span class="st">&quot;</span><span class="ot">${test_playbook}</span><span class="st">&quot;</span> <span class="kw">2&gt;&amp;1</span> <span class="kw">|</span> <span class="kw">tee</span> <span class="st">&quot;</span><span class="ot">${output}</span><span class="st">&quot;</span>
+
+  <span class="kw">if</span> <span class="kw">grep</span> -q <span class="st">&#39;changed=0.*failed=0&#39;</span> <span class="st">&quot;</span><span class="ot">${output}</span><span class="st">&quot;</span><span class="kw">;</span> <span class="kw">then</span>
+    <span class="ot">result=</span><span class="st">&#39;pass&#39;</span>
+    <span class="ot">return_status=</span>0
+  <span class="kw">else</span>
+    <span class="ot">result=</span><span class="st">&#39;fail&#39;</span>
+    <span class="ot">return_status=</span>1
+  <span class="kw">fi</span>
+  <span class="kw">rm</span> <span class="st">&quot;</span><span class="ot">${output}</span><span class="st">&quot;</span>
+
+  <span class="kw">log</span> <span class="st">&quot;Result: </span><span class="ot">${result}</span><span class="st">&quot;</span>
+  <span class="kw">return</span> <span class="st">&quot;</span><span class="ot">${return_status}</span><span class="st">&quot;</span>
+<span class="kw">}</span></code></pre></div>
+</section><section id="functional-tests.sh" class="slide level2">
+<h1><code>functional-tests.sh</code></h1>
+<ul>
+<li>Installs <a href="https://github.com/sstephenson/bats">Bash Automated Testing Framework</a></li>
+<li>Looks for <code>.bats</code> files and runs them</li>
+</ul>
+</section><section class="slide level2">
+
+<p>Example: <code>ftp.bats</code></p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="co">#! /usr/bin/env bats</span>
+<span class="co">#</span>
+<span class="co"># Variable SUT_IP should be set outside the script and should contain</span>
+<span class="co"># the IP address of the System Under Test.</span>
+
+<span class="kw">@test</span> <span class="st">&#39;Anonymous user should be able to fetch README&#39;</span> {
+  <span class="kw">run</span> curl --silent <span class="st">&quot;ftp://</span><span class="ot">${SUT_IP}</span><span class="st">/pub/README&quot;</span>
+
+  <span class="kw">echo</span> <span class="st">&quot;Result: </span><span class="ot">${output}</span><span class="st">&quot;</span>
+
+ <span class="kw"> [</span> <span class="st">&quot;</span><span class="ot">${status}</span><span class="st">&quot;</span> <span class="ot">-eq</span> <span class="st">&quot;0&quot;</span><span class="kw"> ]</span>
+ <span class="kw"> [</span> <span class="st">&quot;</span><span class="ot">${output}</span><span class="st">&quot;</span> <span class="ot">=</span> <span class="st">&quot;hello world!&quot;</span><span class="kw"> ]</span>
+}</code></pre></div>
+</section><section id="running-the-tests" class="slide level2">
+<h1>Running the tests</h1>
+<pre><code>$ DISTRIBUTION=centos VERSION=7 ./docker-tests/docker-tests.sh
+&gt;&gt;&gt; Starting container
+[...]
+&gt;&gt;&gt; Running syntax check on playbook
+[...]
+&gt;&gt;&gt; Syntax check finished
+&gt;&gt;&gt; Running playbook
+[...]
+&gt;&gt;&gt; Run finished
+&gt;&gt;&gt; Running idempotence test
+[...]
+&gt;&gt;&gt; Result: pass
+</code></pre>
+</section><section class="slide level2">
+
+<pre><code>$ SUT_IP=172.17.0.2 ./docker-tests/functional-tests.sh
+### Using BATS executable at: /usr/local/bin/bats
+### Running test /home/bert/Downloads/ftp/docker-tests/ftp.bats
+ ✓ Anonymous user should be able to fetch README
+
+1 test, 0 failures
+</code></pre>
+</section></section>
+<section><section id="recap" class="titleslide slide level1"><h1>Recap</h1></section><section id="role-tests-setup" class="slide level2">
+<h1>Role + tests setup</h1>
+<pre><code>$ atb role --tests=docker ftp
+$ cd ftp
+$ vi tasks/main.yml
+[ write your role... ]
+$ vi docker-tests/test.yml
+[...]
+$ vi docker-tests/ftp.bats
+[...]
+$ DISTRIBUTION=centos VERSION=7 ./docker-tests/docker-tests.sh
+$ SUT_IP=172.17.0.2 ./docker-tests/functional-tests.sh</code></pre>
+<p>Does this work? Ship it!</p>
+</section><section id="examples" class="slide level2">
+<h1>Examples</h1>
+<ul>
+<li>Role <a href="">bertvv.vsftpd</a>
+<ul>
+<li>Github: <a href="https://github.com/bertvv/ansible-role-vsftpd" class="uri">https://github.com/bertvv/ansible-role-vsftpd</a></li>
+<li>Travis-CI: <a href="https://travis-ci.org/bertvv/ansible-role-vsftpd" class="uri">https://travis-ci.org/bertvv/ansible-role-vsftpd</a></li>
+</ul></li>
+<li>Role <a href="https://galaxy.ansible.com/bertvv/bind/">bertvv.bind</a>
+<ul>
+<li>Github: <a href="https://github.com/bertvv/ansible-role-bind" class="uri">https://github.com/bertvv/ansible-role-bind</a></li>
+<li>Travis-CI: <a href="https://travis-ci.org/bertvv/ansible-role-bind" class="uri">https://travis-ci.org/bertvv/ansible-role-bind</a></li>
+</ul></li>
+</ul>
+</section></section>
+<section><section id="discussion" class="titleslide slide level1"><h1>Discussion</h1></section><section id="limits-issues" class="slide level2">
+<h1>Limits, issues</h1>
+<p>There's always something...</p>
+<ul>
+<li>Not intended use case for Docker</li>
+<li>Impact of <em>SELinux</em>
+<ul>
+<li>Laptop = Fedora vs Travis-CI = Ubuntu</li>
+<li>SELinux settings aren't tested on Travis-CI!</li>
+<li>SELinux on host breaks stuff inside</li>
+</ul></li>
+</ul>
+</section><section class="slide level2">
+
+<ul>
+<li>Different <em>run options</em> depending on distro/version
+<ul>
+<li>trial&amp;error, am I doing it wrong?</li>
+</ul></li>
+<li><code>docker-tests.sh</code> hangs on CentOS 6 image
+<ul>
+<li>after succesfully finishing playbook</li>
+</ul></li>
+</ul>
+</section><section id="future-work" class="slide level2">
+<h1>Future work</h1>
+<ul>
+<li>Use Ansible Container
+<ul>
+<li>official distro images instead of my own</li>
+</ul></li>
+<li>(Try to) fix issues</li>
+<li>Apply to all my roles</li>
+</ul>
+</section></section>
+<section><section id="thats-it" class="titleslide slide level1"><h1>That's it!</h1></section><section id="thank-you" class="slide level2">
+<h1>Thank you!</h1>
+<p>Feedback welcome!</p>
+<ul>
+<li>Twitter: <a href="https://twitter.com/bertvanvreckem">bertvanvreckem</a></li>
+<li>Github: <a href="https://github.com/bertvv" class="uri">https://github.com/bertvv</a></li>
+<li>Galaxy: <a href="https://galaxy.ansible.com/bertvv/" class="uri">https://galaxy.ansible.com/bertvv/</a></li>
+</ul>
+</section><section id="read-more" class="slide level2">
+<h1>Read more</h1>
+<ul>
+<li>Blog post &quot;Testing Ansible Roles With Travis-CI&quot;
+<ul>
+<li><a href="https://bertvv.github.io/notes-to-self/2015/12/11/testing-ansible-roles-with-travis-ci-part-1-centos">Part 1: CentOS</a></li>
+<li><a href="https://bertvv.github.io/notes-to-self/2015/12/13/testing-ansible-roles-with-travis-ci-part-2-multi-platform-tests">Part 2: Multi-platform tests</a></li>
+</ul></li>
+<li>Jeff Geerling, <a href="https://www.ansiblefordevops.com/">Ansible for DevOps</a>, Chapter 11</li>
+</ul>
+</section></section>
+    </div>
+  </div>
+
+  <script src="reveal.js/lib/js/head.min.js"></script>
+  <script src="reveal.js/js/reveal.js"></script>
+
+  <script>
+
+      // Full list of configuration options available at:
+      // https://github.com/hakimel/reveal.js#configuration
+      Reveal.initialize({
+
+        // Optional reveal.js plugins
+        dependencies: [
+          { src: 'reveal.js/lib/js/classList.js', condition: function() { return !document.body.classList; } },
+          { src: 'reveal.js/plugin/zoom-js/zoom.js', async: true },
+          { src: 'reveal.js/plugin/notes/notes.js', async: true }
+        ]
+      });
+    </script>
+    </body>
+</html>
