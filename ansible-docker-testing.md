@@ -21,7 +21,7 @@
 - Testing with Vagrant
 - Iteration 1: testing roles for CentOS
 - Iteration 2: add platforms
-- Iteration 3: Refactoring, functional tests
+- Iteration 3: refactoring, functional tests
 - Discussion, future work
 
 ## Motivation
@@ -107,12 +107,20 @@ end
 
 ## test.yml
 
+Test playbook:
+
 ```Yaml
+# Test playbook for Ansible role bertvv.ftp
 ---
 - hosts: all
   become: true
   roles:
-    - ftp
+    - role_under_test
+  post_tasks:
+    - name: Put a file into the shared directory
+      copy:
+        dest: /var/ftp/pub/README
+        content: 'hello world!'
 ```
 
 ## Running tests
@@ -127,14 +135,7 @@ Bringing machine 'testftp' up with 'virtualbox' provider...
 
 PLAY [all] *********************************************************************
 
-TASK [setup] *******************************************************************
-ok: [testftp]
-
-TASK [ftp : include_vars] ******************************************************
-ok: [testftp] => (item=/home/bert/Downloads/ftp/vars/RedHat.yml)
-
-TASK [ftp : Install packages] **************************************************
-changed: [testftp] => (item=[u'vsftpd'])
+[...]
 
 TASK [ftp : Ensure service is started] *****************************************
 changed: [testftp]
@@ -143,9 +144,11 @@ PLAY RECAP *********************************************************************
 testftp                    : ok=4    changed=2    unreachable=0    failed=0
 ```
 
+Afterwards: `curl ftp://192.168.56.42/pub/README`
+
 ## Issues
 
-This served me fine, but...
+This still serves me fine, but...
 
 Supporting multiple platforms is hard
 
@@ -228,27 +231,14 @@ before_install:
   - sudo docker pull bertvv/ansible-testing:centos_7
 
 script:
-  - sudo docker run --detach --privileged --volume=/sys/fs/cgroup:/sys/fs/cgroup:ro bertvv/ansible-testing:centos_7 /usr/sbin/init > "${CONTAINER_ID}"
-  - sudo docker exec "$(cat ${CONTAINER_ID})" ansible-playbook /etc/ansible/test.yml --syntax-check
-  - sudo docker exec "$(cat ${CONTAINER_ID})" ansible-playbook /etc/ansible/test.yml
-```
-
----
-
-Test playbook:
-
-```Yaml
-# Test playbook for Ansible role bertvv.ftp
----
-- hosts: all
-  become: true
-  roles:
-    - role_under_test
-  post_tasks:
-    - name: Put a file into the shared directory
-      copy:
-        dest: /var/ftp/pub/README
-        content: 'hello world!'
+  - sudo docker run --detach --privileged \
+      --volume=/sys/fs/cgroup:/sys/fs/cgroup:ro \
+      --volume="${PWD}":/etc/ansible/roles/role_under_test:ro \
+      bertvv/ansible-testing:centos_7 /usr/sbin/init > "${CONTAINER_ID}"
+  - sudo docker exec "$(cat ${CONTAINER_ID})" \
+      ansible-playbook /etc/ansible/test.yml --syntax-check
+  - sudo docker exec "$(cat ${CONTAINER_ID})" \
+      ansible-playbook /etc/ansible/test.yml
 ```
 
 # Iteration 2: add platforms
@@ -298,26 +288,31 @@ services:
 before_install:
   - sudo apt-get update
   # Pull container
-  - sudo docker pull ${distribution}:${version}
-  # Customize container
-  - sudo docker build --rm=true --file=tests/Dockerfile.${distribution}-${version} --tag=${distribution}-${version}:ansible tests
+  - sudo docker pull bertvv/ansible-testing:${distribution}_${version}
 ```
 
 ---
 
 ```Yaml
 script:
-    # Run container in detached state
-  - sudo docker run --detach --volume="${PWD}":/etc/ansible/roles/role_under_test:ro ${run_opts} ${distribution}-${version}:ansible "${init}" > "${container_id}"
+  # Run container in detached state
+  - sudo docker run --detach \
+      --volume="${PWD}":/etc/ansible/roles/role_under_test:ro \
+      ${run_opts} bertvv/ansible-testing:${distribution}_${version} \
+      "${init}" > "${container_id}"
 
-    # Syntax check
-  - sudo docker exec --tty "$(cat ${container_id})" env TERM=xterm ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml --syntax-check
-    # Test role
-  - sudo docker exec --tty "$(cat ${container_id})" env TERM=xterm ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml
-    # Idempotence test
+  # Syntax check
+  - sudo docker exec --tty "$(cat ${container_id})" env TERM=xterm \
+      ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml \
+      --syntax-check
+  # Test role
+  - sudo docker exec --tty "$(cat ${container_id})" env TERM=xterm \
+      ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml \
+  # Idempotence test
   - >
-    sudo docker exec "$(cat ${container_id})" ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml
-    | grep -q 'changed=0.*failed=0'
+    sudo docker exec "$(cat ${container_id})"  env TERM=xterm
+      ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml
+      | grep -q 'changed=0.*failed=0'
     && (echo 'Idempotence test: pass' && exit 0)
     || (echo 'Idempotence test: fail' && exit 1)
 ```
@@ -377,7 +372,7 @@ script:
 
 To run locally:
 
-`DISTRIBUTION=centos VERSION=7 ./docker-tests.sh`
+`DISTRIBUTION=centos VERSION=7 docker-tests/docker-tests.sh`
 
 ```Bash
 main() {
@@ -530,7 +525,7 @@ $ atb role --tests=docker ftp
 $ cd ftp
 $ vi tasks/main.yml
 [ write your role... ]
-$ vi docker-tests/test.ym;
+$ vi docker-tests/test.yml
 [...]
 $ vi docker-tests/ftp.bats
 [...]
@@ -544,10 +539,10 @@ Does this work? Ship it!
 
 - Role [bertvv.vsftpd]()
     - Github: <https://github.com/bertvv/ansible-role-vsftpd>
-    - Travis-CI build log: <https://travis-ci.org/bertvv/ansible-role-vsftpd>
+    - Travis-CI: <https://travis-ci.org/bertvv/ansible-role-vsftpd>
 - Role [bertvv.bind](https://galaxy.ansible.com/bertvv/bind/)
     - Github: <https://github.com/bertvv/ansible-role-bind>
-    - Travis-CI build log: <https://travis-ci.org/bertvv/ansible-role-bind>
+    - Travis-CI: <https://travis-ci.org/bertvv/ansible-role-bind>
 
 # Discussion
 
@@ -556,30 +551,38 @@ Does this work? Ship it!
 There's always something...
 
 - Not intended use case for Docker
-- Impact of SELinux
-    - 
+- Impact of *SELinux*
+    - Laptop = Fedora vs Travis-CI = Ubuntu
+    - SELinux settings aren't tested on Travis-CI!
+    - SELinux on host breaks stuff inside
+
+---
+
+- Different *run options* depending on distro/version
+    - trial&error, am I doing it wrong?
 - `docker-tests.sh` hangs on CentOS 6 image
     - after succesfully finishing playbook
-- Different options depending on distro/version
-    - trial&error, am I doing it wrong?
 
 ## Future work
 
 - Use Ansible Container
     - official distro images instead of my own
+- (Try to) fix issues
 - Apply to all my roles
 
 # That's it!
 
 ## Thank you!
 
-- Twitter: [@bertvanvreckem](https://twitter.com/bertvanvreckem)
+Feedback welcome!
+
+- Twitter: [bertvanvreckem](https://twitter.com/bertvanvreckem)
 - Github: <https://github.com/bertvv>
 - Galaxy: <https://galaxy.ansible.com/bertvv/>
 
-Read more:
+## Read more
 
 - Blog post "Testing Ansible Roles With Travis-CI"
-   - [Part 1: CentOS](https://bertvv.github.io/notes-to-self/2015/12/11/testing-ansible-roles-with-travis-ci-part-1-centos)
-   - [Part 2: Multi-platform tests](https://bertvv.github.io/notes-to-self/2015/12/13/testing-ansible-roles-with-travis-ci-part-2-multi-platform-tests)
+    - [Part 1: CentOS](https://bertvv.github.io/notes-to-self/2015/12/11/testing-ansible-roles-with-travis-ci-part-1-centos)
+    - [Part 2: Multi-platform tests](https://bertvv.github.io/notes-to-self/2015/12/13/testing-ansible-roles-with-travis-ci-part-2-multi-platform-tests)
 - Jeff Geerling, [Ansible for DevOps](https://www.ansiblefordevops.com/), Chapter 11
