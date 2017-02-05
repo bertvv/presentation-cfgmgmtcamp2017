@@ -18,9 +18,11 @@
 
 ## Agenda
 
-TODO
-
-# Motivation
+- Testing with Vagrant
+- Iteration 1: testing roles for CentOS
+- Iteration 2: add platforms
+- Iteration 3: Refactoring, functional tests
+- Discussion, future work
 
 ## Motivation
 
@@ -32,9 +34,8 @@ TODO
 
 ## Let's create an "ftp" role
 
-- Initial target platforms:
-    1. CentOS 7
-    2. Ubuntu 14.04
+- Initial target platform: CentOS 7
+- Add Vagrant & Docker tests
 - Bootstrapping automated with <https://github.com/bertvv/ansible-toolbox>
 
 # Original setup
@@ -67,8 +68,8 @@ ftp/
 
 ## Test code
 
-- on a separate branch
-- included through `git-worktree`
+- on a separate orphan branch
+- "mounted" through `git-worktree`
 
 ```
 $ tree vagrant-tests/
@@ -210,4 +211,375 @@ VOLUME ["/sys/fs/cgroup"]
 CMD ["/usr/sbin/init"]
 ```
 
+---
 
+```Yaml
+# .travis.yml
+---
+sudo: required
+env:
+  - CONTAINER_ID=$(mktemp)
+
+services:
+  - docker
+
+before_install:
+  - sudo apt-get update
+  - sudo docker pull bertvv/ansible-testing:centos_7
+
+script:
+  - sudo docker run --detach --privileged --volume=/sys/fs/cgroup:/sys/fs/cgroup:ro bertvv/ansible-testing:centos_7 /usr/sbin/init > "${CONTAINER_ID}"
+  - sudo docker exec "$(cat ${CONTAINER_ID})" ansible-playbook /etc/ansible/test.yml --syntax-check
+  - sudo docker exec "$(cat ${CONTAINER_ID})" ansible-playbook /etc/ansible/test.yml
+```
+
+---
+
+Test playbook:
+
+```Yaml
+# Test playbook for Ansible role bertvv.ftp
+---
+- hosts: all
+  become: true
+  roles:
+    - role_under_test
+  post_tasks:
+    - name: Put a file into the shared directory
+      copy:
+        dest: /var/ftp/pub/README
+        content: 'hello world!'
+```
+
+# Iteration 2: add platforms
+
+## Setup
+
+- If we can do this for one distro, why not for others?
+- Added container images for Ubuntu 12.04, 14.04, CentOS 6
+- `.travis.yml` with environment matrix
+- Built PoC based on [`geerlingguy.apache`](https://galaxy.ansible.com/geerlingguy/apache/)
+    - submitted  [PR#60](https://github.com/geerlingguy/ansible-role-apache/pull/60), was [accepted](https://github.com/geerlingguy/ansible-role-apache/pull/60#issuecomment-164291402)
+
+---
+
+```Yaml
+# .travis.yml
+sudo: required
+env:
+  - distribution: centos
+    version: 6
+    init: /sbin/init
+    run_opts: ""
+    container_id: $(mktemp)
+  - distribution: centos
+    version: 7
+    init: /usr/lib/systemd/systemd
+    run_opts: "--privileged --volume=/sys/fs/cgroup:/sys/fs/cgroup:ro"
+    container_id: $(mktemp)
+  - distribution: ubuntu
+    version: 14.04
+    init: /sbin/init
+    run_opts: ""
+    container_id: $(mktemp)
+  - distribution: ubuntu
+    version: 12.04
+    init: /sbin/init
+    run_opts: ""
+    container_id: $(mktemp)
+```
+
+---
+
+```Yaml
+services:
+  - docker
+
+before_install:
+  - sudo apt-get update
+  # Pull container
+  - sudo docker pull ${distribution}:${version}
+  # Customize container
+  - sudo docker build --rm=true --file=tests/Dockerfile.${distribution}-${version} --tag=${distribution}-${version}:ansible tests
+```
+
+---
+
+```Yaml
+script:
+    # Run container in detached state
+  - sudo docker run --detach --volume="${PWD}":/etc/ansible/roles/role_under_test:ro ${run_opts} ${distribution}-${version}:ansible "${init}" > "${container_id}"
+
+    # Syntax check
+  - sudo docker exec --tty "$(cat ${container_id})" env TERM=xterm ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml --syntax-check
+    # Test role
+  - sudo docker exec --tty "$(cat ${container_id})" env TERM=xterm ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml
+    # Idempotence test
+  - >
+    sudo docker exec "$(cat ${container_id})" ansible-playbook /etc/ansible/roles/role_under_test/tests/test.yml
+    | grep -q 'changed=0.*failed=0'
+    && (echo 'Idempotence test: pass' && exit 0)
+    || (echo 'Idempotence test: fail' && exit 1)
+```
+
+# Iteration 3: Refactoring, functional tests
+
+## Setup
+
+- It#2: All commands enumerated in `.travis.yml`
+    - Limited reusability
+    - Hard to reproduce locally
+- Moved code to `docker-tests.sh`
+- Added framework for functional tests
+
+---
+
+```Yaml
+# .travis.yml Execution script for role tests on Travis-CI
+---
+sudo: required
+
+env:
+  matrix:
+    - DISTRIBUTION: centos
+      VERSION: 7
+    - DISTRIBUTION: ubuntu
+      VERSION: 14.04
+    - DISTRIBUTION: ubuntu
+      VERSION: 16.04
+
+services:
+  - docker
+
+before_install:
+    # Install latest Git
+  - sudo apt-get update
+  - sudo apt-get install --only-upgrade git
+    # Allow fetching other branches than master
+  - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
+    # Fetch the branch with test code
+  - git fetch origin docker-tests
+  - git worktree add docker-tests origin/docker-tests
+```
+
+---
+
+```Yaml
+script:
+  # Create container and apply test playbook
+  - ./docker-tests/docker-tests.sh
+
+  # Run functional tests on the container
+  - SUT_IP=172.17.0.2 ./docker-tests/functional-tests.sh
+```
+
+## `docker-tests.sh`
+
+To run locally:
+
+`DISTRIBUTION=centos VERSION=7 ./docker-tests.sh`
+
+```Bash
+main() {
+  # Sets distribution-specific run-options for docker
+  configure_environment
+
+  start_container
+
+  run_syntax_check
+  run_test_playbook
+  run_idempotence_test
+
+  # cleanup
+}
+```
+
+---
+
+```Bash
+start_container() {
+  log "Starting container"
+  set -x
+  docker run --detach \
+    --volume="${PWD}:${role_dir}:ro" \
+    "${run_opts[@]}" \
+    "${docker_image}:${DISTRIBUTION}_${VERSION}" \
+    "${init}" \
+    > "${container_id}"
+  set +x
+}
+```
+
+---
+
+```Bash
+run_syntax_check() {
+  log 'Running syntax check on playbook'
+  exec_container ansible-playbook "${test_playbook}" --syntax-check
+  log 'Syntax check finished'
+}
+
+run_test_playbook() {
+  log 'Running playbook'
+  exec_container ansible-playbook "${test_playbook}"
+  log 'Run finished'
+}
+```
+
+---
+
+```Bash
+exec_container() {
+  local id
+  id="$(get_container_id)"
+
+  set -x
+  docker exec --tty \
+    "${id}" \
+    env TERM=xterm \
+    "${@}"
+  set +x
+}
+```
+
+---
+
+```Bash
+run_idempotence_test() {
+  log 'Running idempotence test'
+  local output
+  output="$(mktemp)"
+
+  exec_container ansible-playbook "${test_playbook}" 2>&1 | tee "${output}"
+
+  if grep -q 'changed=0.*failed=0' "${output}"; then
+    result='pass'
+    return_status=0
+  else
+    result='fail'
+    return_status=1
+  fi
+  rm "${output}"
+
+  log "Result: ${result}"
+  return "${return_status}"
+}
+```
+
+## `functional-tests.sh`
+
+- Installs [Bash Automated Testing Framework](https://github.com/sstephenson/bats)
+- Looks for `.bats` files and runs them
+
+---
+
+Example: `ftp.bats`
+
+```Bash
+#! /usr/bin/env bats
+#
+# Variable SUT_IP should be set outside the script and should contain
+# the IP address of the System Under Test.
+
+@test 'Anonymous user should be able to fetch README' {
+  run curl --silent "ftp://${SUT_IP}/pub/README"
+
+  echo "Result: ${output}"
+
+  [ "${status}" -eq "0" ]
+  [ "${output}" = "hello world!" ]
+}
+```
+
+## Running the tests
+
+```
+$ DISTRIBUTION=centos VERSION=7 ./docker-tests/docker-tests.sh
+>>> Starting container
+[...]
+>>> Running syntax check on playbook
+[...]
+>>> Syntax check finished
+>>> Running playbook
+[...]
+>>> Run finished
+>>> Running idempotence test
+[...]
+>>> Result: pass
+
+```
+
+---
+
+```
+$ SUT_IP=172.17.0.2 ./docker-tests/functional-tests.sh
+### Using BATS executable at: /usr/local/bin/bats
+### Running test /home/bert/Downloads/ftp/docker-tests/ftp.bats
+ ✓ Anonymous user should be able to fetch README
+
+1 test, 0 failures
+
+```
+
+# Recap
+
+## Role + tests setup
+
+```
+$ atb role --tests=docker ftp
+$ cd ftp
+$ vi tasks/main.yml
+[ write your role... ]
+$ vi docker-tests/test.ym;
+[...]
+$ vi docker-tests/ftp.bats
+[...]
+$ DISTRIBUTION=centos VERSION=7 ./docker-tests/docker-tests.sh
+$ SUT_IP=172.17.0.2 ./docker-tests/functional-tests.sh
+```
+
+Does this work? Ship it!
+
+## Examples
+
+- Role [bertvv.vsftpd]()
+    - Github: <https://github.com/bertvv/ansible-role-vsftpd>
+    - Travis-CI build log: <https://travis-ci.org/bertvv/ansible-role-vsftpd>
+- Role [bertvv.bind](https://galaxy.ansible.com/bertvv/bind/)
+    - Github: <https://github.com/bertvv/ansible-role-bind>
+    - Travis-CI build log: <https://travis-ci.org/bertvv/ansible-role-bind>
+
+# Discussion
+
+## Limits, issues
+
+There's always something...
+
+- Not intended use case for Docker
+- Impact of SELinux
+    - 
+- `docker-tests.sh` hangs on CentOS 6 image
+    - after succesfully finishing playbook
+- Different options depending on distro/version
+    - trial&error, am I doing it wrong?
+
+## Future work
+
+- Use Ansible Container
+    - official distro images instead of my own
+- Apply to all my roles
+
+# That's it!
+
+## Thank you!
+
+- Twitter: [@bertvanvreckem](https://twitter.com/bertvanvreckem)
+- Github: <https://github.com/bertvv>
+- Galaxy: <https://galaxy.ansible.com/bertvv/>
+
+Read more:
+
+- Blog post "Testing Ansible Roles With Travis-CI"
+   - [Part 1: CentOS](https://bertvv.github.io/notes-to-self/2015/12/11/testing-ansible-roles-with-travis-ci-part-1-centos)
+   - [Part 2: Multi-platform tests](https://bertvv.github.io/notes-to-self/2015/12/13/testing-ansible-roles-with-travis-ci-part-2-multi-platform-tests)
+- Jeff Geerling, [Ansible for DevOps](https://www.ansiblefordevops.com/), Chapter 11

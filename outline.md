@@ -30,7 +30,7 @@ I want to automate all the things!
 
 - Docker container images for Ubuntu 12.04, 14.04
 - `.travis.yml`: environment matrix to
-- Applied to `geerlingguy.apache` and submitted as PR
+- PoC  `geerlingguy.apache` and submitted as [PR#60](https://github.com/geerlingguy/ansible-role-apache/pull/60)
 
 ## Iteration 3: scripted
 
